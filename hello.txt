@@ -1,1 +1,220 @@
-He
+public class BdxCsvReader implements BdxICsvReader
+{
+    private static final String PERCENT = '%';
+    private static final String UTF8 = 'UTF-8';
+    private static final String DBLQT = 'DBLQT';
+    private static final String DOUBLEQUOTE = '"';
+    private static final String TWO_QUOTES = '""';
+    private static final String COMMA = ',';
+    private static final String NEWLINE = '\n';
+    private static final String NEWLINE_WIN = '\r\n';
+    private String delimiter = COMMA;
+
+/** Default constructor, assumes delimiter is a , */
+    public BdxCsvReader() {
+        delimiter = COMMA;
+    }
+
+/** Constructor allowing override of delimiter */
+    public BdxCsvReader(String delimiter) {
+        setDelimiter(delimiter);
+    }
+
+    public boolean validateCsv(String contents){
+        contents = contents.replaceAll(NEWLINE_WIN, NEWLINE);
+        List<String> lines = contents.split(NEWLINE);
+        return !lines.isEmpty() && !String.isBlank(contents);
+    }
+
+    public boolean validateCsv(Document file){
+        return validateCsv(blobToString(file.body));
+    }
+
+    public boolean validateCsv(Attachment attachment){
+        return validateCsv(blobToString(attachment.body));
+    }
+
+    public boolean validateCsv(Blob content){
+        return validateCsv(blobToString(content));
+    }
+
+    public List<List<String> > cleanseRows(List<List<String> > data){
+        for(Integer i=0; i<data.size(); i++) {
+            List<String> row = data.get(i);
+            Boolean isEmptyRow = true;
+            for(String col: row) {
+                if(String.isNotBlank(col)) {
+                    isEmptyRow = false;
+                    break;
+                }
+            }
+            if(isEmptyRow) {
+                data.remove(i);
+                i--;
+            }
+        }
+        return data;
+    }
+
+    public List<List<String> > trimData(List<List<String> > data){
+        for(Integer i=0; i<data.size(); i++) {
+            List<String> row = data.get(i);
+            for(Integer j=0; j<row.size(); j++) {
+                if(String.isNotBlank(row[j])) {
+                    row[j] = row[j].trim();
+                }
+            }
+        }
+        return data;
+    }
+
+    public List<List<String> > readCsv(String contents){
+        contents = contents.replaceAll(NEWLINE_WIN, NEWLINE);
+        return parse(contents);
+    }
+
+    public List<List<String> > readCsv(Document file){
+        return readCsv(blobToString(file.body));
+    }
+
+    public List<List<String> > readCsv(Attachment attachment){
+        return readCsv(blobToString(attachment.body));
+    }
+
+    public List<List<String> > readCsv(Blob content){
+        return readCsv(blobToString(content));
+    }
+
+    /*
+       This method does not throw an error if the number of columns are not matching in the input data
+       by given headers and rest of the rows.
+       You can pass value ignoreColumnSizeCheck as false and verify the input and output size
+       if data has values for all the columns.
+     */
+    public List<Map<String, String> > transformToMap(List<List<String> > dataList, Boolean ignoreColumnSizeCheck){
+
+        List<Map<String, String> > dataMapList = new List<Map<String, String> >();
+        List<String> headerList = dataList.get(0);
+        Boolean isFirstRow = true;
+        for(List<String> values: dataList) {
+            if(isFirstRow) {
+                isFirstRow = false;
+                continue;
+            }
+            if(ignoreColumnSizeCheck || values.size() == headerList.size()) {
+                Map<String, String> rowMap = new Map<String, String>();
+                Integer counter = 0;
+                for(String val: values) {
+                    rowMap.put(headerList.get(counter++), val);
+                }
+                dataMapList.add(rowMap);
+            }
+        }
+        return dataMapList;
+    }
+
+/** Sets the delimiter on an already constructed instance */
+    public void setDelimiter(String delimiter){
+        this.delimiter = delimiter;
+    }
+
+    private static String blobToString(Blob input)
+    {
+        String hex = EncodingUtil.convertToHex(input);
+        if(String.isBlank(hex)) {
+            return hex;
+        }
+        final Integer bytesCount = hex.length() >> 1;
+        String[] bytes = new String[bytesCount];
+        for(Integer i = 0; i < bytesCount; ++i) {
+            bytes[i] =  hex.mid(i << 1, 2);
+        }
+        return EncodingUtil.urlDecode(PERCENT + String.join(bytes, PERCENT), UTF8);
+    }
+
+    private String csvString;
+    private Integer csvStringLength;
+    private Integer position = 0;
+
+    private Integer readToLine(Integer position, List<String> values)
+    {
+        Integer startPos = position;
+        String currentValue;
+        Integer cAt, nlAt, foundAt;
+        List<String> tmpValues = new List<String>();
+
+        while (position < csvStringLength)
+        {
+            cAt = this.csvString.indexOf( this.delimiter, position );
+            nlAt = this.csvString.indexOf( NEWLINE, position );
+            foundAt = Math.min( cAt, nlAt );
+            if( foundAt == -1 ) {
+                foundAt = Math.max( cAt, nlAt );
+            }
+
+            if (foundAt == -1) {
+                currentValue = this.csvString.substring(startPos);
+                position = this.csvStringLength;
+            } else {
+                currentValue = this.csvString.substring(startPos, foundAt );
+                position = foundAt + 1;
+            }
+            if(IsProperSplit(currentValue)) {
+                if( !currentValue.startsWith( DOUBLEQUOTE ) ) {
+                    currentValue = currentValue.substring( 0, currentValue.length());
+                }else{
+                    currentValue = currentValue.substring( 1, currentValue.length() - 1 );
+                }
+                currentValue = currentValue.replace(TWO_QUOTES, DOUBLEQUOTE);
+                tmpValues.add(currentValue);
+                if( foundAt == nlAt ) {
+                    break;
+                }
+                startPos = position;
+            }
+        }
+
+        values.addAll( tmpValues );
+        return position;
+    }
+    private Boolean IsProperSplit(String sample){
+        Integer count = 0;
+        for(Integer i=0; i<sample.length(); i++) {
+            if(sample.charAt(i) == 34) {
+                count = count + 1;
+            }
+        }
+        if(math.mod(count,2) == 0) {
+            return true;
+        }
+        return false;
+    }
+    private List<String> readLine()
+    {
+        List<String> values = new List<String>();
+        this.position = this.readToLine( this.position, values );
+        return values;
+    }
+
+    private List<List<String> > parse( String csvString )
+    {
+        List<List<String> > linesValues = new List<List<String> >();
+        if(String.isBlank(csvString)) {
+            return linesValues;
+        }
+
+        if(!csvString.endsWith(NEWLINE)) {
+            csvString += NEWLINE;
+        }
+        this.csvString = csvString;
+        position = 0;
+        csvStringLength = csvString.length();
+
+        while (position < csvStringLength)
+        {
+            linesValues.Add(readLine());
+        }
+
+        return linesValues;
+    }
+}
